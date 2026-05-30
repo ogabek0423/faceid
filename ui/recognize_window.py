@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import sys
 import os
+import time
 from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel,
     QPushButton, QFrame, QProgressBar, QSizePolicy
@@ -14,9 +15,13 @@ sys.path.insert(0, BASE_DIR)
 
 from database.db_manager import load_all_encodings
 from utils.face_processor import (
+    compare_encodings_multi,
     detect_faces, get_landmarks, get_face_encoding,
     draw_landmarks, draw_face_box, compare_encodings
 )
+
+# Tanib olish natijasini bir necha kadr ushlab turish (titroq oldini olish)
+SMOOTHING_FRAMES = 5
 
 
 class RecognizeWidget(QWidget):
@@ -27,7 +32,10 @@ class RecognizeWidget(QWidget):
         self.timer.timeout.connect(self._update_frame)
         self.known_encodings = []
         self.current_frame = None
-        self.last_result = None
+
+        # Smoothing bufer — oxirgi N kadrning natijalarini saqlash
+        self._result_buffer = []   # [(person_dict or None, confidence), ...]
+
         self._build_ui()
         self._reload_encodings()
 
@@ -61,16 +69,16 @@ class RecognizeWidget(QWidget):
 
         root.addLayout(top)
 
-        # Asosiy 3 panel
+        # Asosiy 2 panel
         panels = QHBoxLayout()
         panels.setSpacing(12)
 
         # Panel 1 — original kamera
-        self.cam_label = self._make_panel("Kamera oqimi", 400, 300)
+        self.cam_label = self._make_video_label(480, 360)
         panels.addWidget(self._wrap(self.cam_label, "Kamera oqimi"))
 
-        # Panel 2 — landmark ko'rinish
-        self.lm_label = self._make_panel("Landmark nuqtalar", 400, 300)
+        # Panel 2 — landmark ko'rinish (QORA FON)
+        self.lm_label = self._make_video_label(480, 360)
         panels.addWidget(self._wrap(self.lm_label, "Landmark nuqtalar (68 ta)"))
 
         root.addLayout(panels)
@@ -145,12 +153,12 @@ class RecognizeWidget(QWidget):
 
         root.addLayout(result_col)
 
-    def _make_panel(self, title, w, h):
+    def _make_video_label(self, w, h):
         lbl = QLabel("Kamera o'chirilgan")
         lbl.setFixedSize(w, h)
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setStyleSheet(
-            "background:#111;color:#555;font-size:13px;"
+            "background:#0a0a0a;color:#555;font-size:13px;"
             "border-radius:8px;border:1px solid #333;"
         )
         return lbl
@@ -185,6 +193,7 @@ class RecognizeWidget(QWidget):
 
     def _reload_encodings(self):
         self.known_encodings = load_all_encodings()
+        self._result_buffer.clear()
         self.btn_reload.setText(f"🔄  Bazani yangilash ({len(self.known_encodings)} ta)")
 
     def _toggle_camera(self):
@@ -194,7 +203,7 @@ class RecognizeWidget(QWidget):
                 from PyQt5.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Xato", "Kamera topilmadi!")
                 return
-            self.timer.start(30)
+            self.timer.start(33)  # ~30 FPS
             self.btn_cam.setText("⏹  To'xtatish")
             self.btn_cam.setStyleSheet(
                 "background:#c0392b;color:white;border-radius:5px;padding:0 14px;font-size:12px;"
@@ -215,6 +224,7 @@ class RecognizeWidget(QWidget):
             "background:#1D9E75;color:white;border-radius:5px;padding:0 14px;font-size:12px;"
         )
         self._reset_result()
+        self._result_buffer.clear()
 
     def _reset_result(self):
         self.name_label.setText("Kutilmoqda...")
@@ -229,7 +239,6 @@ class RecognizeWidget(QWidget):
     def _update_frame(self):
         if self.cap is None:
             return
-        import time
         ret, frame = self.cap.read()
         if not ret:
             return
@@ -239,43 +248,104 @@ class RecognizeWidget(QWidget):
         faces = detect_faces(frame)
         elapsed = int((time.time() - t0) * 1000)
 
-        # Panel 1: kamera + yuz ramkasi
         display1 = frame.copy()
+
+        # ============================================================
+        # LANDMARK OYNASI: har doim qora fon, yuz bo'lsa chiziladi
+        # ============================================================
+        lm_display = np.zeros((frame.shape[0], frame.shape[1], 3), dtype=np.uint8)
 
         if len(faces) > 0:
             face = faces[0]
-            # Encoding va solishtirish
+            x, y, w, h = face
+
+            # ----- Encoding va tanib olish -----
+            t1 = time.time()
             vec = get_face_encoding(frame, face)
+            result_person, confidence = compare_encodings_multi(self.known_encodings, vec)
+            rec_ms = int((time.time() - t1) * 1000)
 
-            # Diqqat: compare_encodings funksiyasiga ma'lumot yuborilmoqda
-            result_person, confidence = compare_encodings(self.known_encodings, vec)
+            # Smoothing: oxirgi N kadrni buferlash
+            self._result_buffer.append((result_person, confidence))
+            if len(self._result_buffer) > SMOOTHING_FRAMES:
+                self._result_buffer.pop(0)
 
-            # Agar shaxs aniqlansa yashil, aks holda qizil ramka
-            color = (29, 158, 117) if result_person else (60, 60, 200)  # BGR formatda
-            label = result_person['full_name'] if result_person else "Noma'lum"
-            display1 = draw_face_box(display1, face, label, confidence, color)
+            # Eng ko'p uchraydiganini tanlash
+            smooth_person, smooth_conf = self._get_smoothed_result()
 
-            # Panel 2: landmark
+            # Rangi
+            if smooth_person:
+                color = (29, 158, 117)  # yashil
+                label = smooth_person['full_name']
+            else:
+                color = (60, 60, 200)   # ko'k
+                label = "Noma'lum"
+
+            display1 = draw_face_box(display1, face, label, smooth_conf if smooth_person else None, color)
+
+            # ----- Landmark oynasi -----
             landmarks = get_landmarks(frame, face)
-            lm_frame = np.zeros_like(frame)
-            if landmarks:
-                lm_frame = draw_landmarks(lm_frame, landmarks)
-            self._show_frame(lm_frame, self.lm_label)
-            self.metric_widgets['landmarks'].setText("68")
+            if landmarks and len(landmarks) >= 68:
+                # Yuzni landmark oynasiga ham chizamiz (qoʻshimcha ma'lumot)
+                # Avval yuz ramkasini chizamiz
+                cv2.rectangle(lm_display,
+                              (x, y), (x + w, y + h),
+                              (50, 50, 50), 1)
+                lm_display = draw_landmarks(lm_display, landmarks)
+                # Nuqtalar sonini ko'rsatish
+                self.metric_widgets['landmarks'].setText("68")
+            else:
+                # Landmarks yo'q — matli xabar chizamiz
+                cv2.putText(lm_display,
+                            "Landmark modeli yo'q",
+                            (10, lm_display.shape[0] // 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                            (100, 100, 100), 1, cv2.LINE_AA)
+                self.metric_widgets['landmarks'].setText("0")
 
-            # FAQAT YUZ BOR BO'LSAGINA NATIJANI YANGILASH
-            self._update_result(result_person, confidence)
+            # Natijani yangilash
+            self._update_result(smooth_person, smooth_conf)
+
         else:
-            self.lm_label.setText("Yuz topilmadi")
+            # Yuz topilmadi
+            self._result_buffer.clear()
+            self.lm_label.clear()
+            cv2.putText(lm_display,
+                        "Yuz topilmadi",
+                        (lm_display.shape[1] // 2 - 80, lm_display.shape[0] // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                        (80, 80, 80), 1, cv2.LINE_AA)
             self.metric_widgets['landmarks'].setText("0")
-            # Kadrda yuz bo'lmasa, oynani boshlang'ich holatga qaytarish
             self._reset_result()
 
+        # Ikkala panelni ko'rsatish
         self._show_frame(display1, self.cam_label)
+        self._show_frame(lm_display, self.lm_label)
 
         # Metrikalar
         self.metric_widgets['faces'].setText(str(len(faces)))
         self.metric_widgets['time'].setText(f"{elapsed}")
+
+    def _get_smoothed_result(self):
+        """Buferdan eng ishonchli natijani qaytaradi"""
+        if not self._result_buffer:
+            return None, 0.0
+
+        # Aniqlangan shaxslar
+        found = [(p, c) for p, c in self._result_buffer if p is not None]
+        if not found:
+            return None, 0.0
+
+        # Agar yaridan ko'pi aniq bo'lsa, o'rtacha confidence
+        if len(found) >= (SMOOTHING_FRAMES // 2 + 1):
+            # Eng ko'p uchraydigan shaxs
+            names = [p['full_name'] for p, c in found]
+            most_common = max(set(names), key=names.count)
+            best = [(p, c) for p, c in found if p['full_name'] == most_common]
+            avg_conf = sum(c for _, c in best) / len(best)
+            return best[0][0], avg_conf
+
+        return None, 0.0
 
     def _show_frame(self, frame, label):
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -298,25 +368,21 @@ class RecognizeWidget(QWidget):
             )
             self.conf_label.setText("—")
             self.conf_bar.setValue(0)
-            self.conf_bar.setStyleSheet("""
-                QProgressBar { border:1px solid #ddd; border-radius:4px; height:8px; }
-                QProgressBar::chunk { background:#c0392b; border-radius:3px; }
-            """)
         else:
             self.name_label.setText(person['full_name'])
             self.name_label.setStyleSheet("color:#1a1a1a;")
             self.info_label.setText(
-                f"{person['role']}  ·  {person['person_code']}"
+                f"{person.get('role','—')}  ·  {person.get('person_code','—')}"
             )
-            initials = "".join(w[0].upper() for w in person['full_name'].split()[:2])
+            initials = "".join(word[0].upper() for word in person['full_name'].split()[:2])
             self.avatar_label.setText(initials)
             self.avatar_label.setStyleSheet(
                 "background:#E1F5EE;border-radius:30px;color:#085041;"
             )
             conf_int = int(confidence)
             self.conf_label.setText(f"{conf_int}%")
-            color = "#1D9E75" if conf_int >= 80 else "#BA7517" if conf_int >= 60 else "#c0392b"
-            self.conf_label.setStyleSheet(f"color:{color};")
+            color = "#1D9E75" if conf_int >= 75 else "#BA7517" if conf_int >= 50 else "#c0392b"
+            self.conf_label.setStyleSheet(f"color:{color};font-size:28px;font-weight:bold;")
             self.conf_bar.setValue(conf_int)
             self.conf_bar.setStyleSheet(f"""
                 QProgressBar {{ border:1px solid #ddd; border-radius:4px; height:8px; }}

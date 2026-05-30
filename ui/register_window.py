@@ -376,8 +376,8 @@ class RegisterWidget(QWidget):
 
         # Agar kamida bitta rasmdan encoding ololsak, o'rtachasini hisoblaymiz
         if len(vectors) > 0:
-            avg_vector = np.mean(vectors, axis=0).tolist()
-            save_encoding(self.person_id, avg_vector)
+            # Barcha vektorlarni saqlaymiz (o'rtacha emas)
+            save_encoding(self.person_id, vectors)
 
             self.status_label.setText(
                 f"✓ Muvaffaqiyatli saqlandi! {len(vectors)} ta rasmdan encoding olindi."

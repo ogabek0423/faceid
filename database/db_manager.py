@@ -43,7 +43,7 @@ def init_db():
 
 
 def add_person(full_name, role, person_code=None):
-    """Yangi shaxs qo'shadi, ID qaytaradi"""
+    """Yangi shaxs qo'shadi, ID va kodni qaytaradi"""
     conn = get_connection()
     try:
         if not person_code:
@@ -74,11 +74,17 @@ def add_face_image(person_id, image_path, angle="to'g'ri"):
         conn.close()
 
 
-def save_encoding(person_id, vector):
-    """Feature vektorni saqlaydi yoki yangilaydi"""
+def save_encoding(person_id, vectors):
+    """
+    Feature vektorlar ro'yxatini saqlaydi yoki yangilaydi.
+    vectors: list of list (har bir rasm uchun alohida vektor)
+    """
     conn = get_connection()
     try:
-        blob = pickle.dumps(vector)
+        # vectors — ro'yxat bo'lishi kerak, agar bitta vektor kelsa, list ichiga olamiz
+        if isinstance(vectors, list) and len(vectors) > 0 and not isinstance(vectors[0], list):
+            vectors = [vectors]
+        blob = pickle.dumps(vectors)
         conn.execute(
             "INSERT OR REPLACE INTO encodings (person_id, feature_vector) VALUES (?,?)",
             (person_id, blob)
@@ -89,7 +95,10 @@ def save_encoding(person_id, vector):
 
 
 def load_all_encodings():
-    """Barcha encoding + shaxs ma'lumotlarini qaytaradi"""
+    """
+    Barcha encoding + shaxs ma'lumotlarini qaytaradi.
+    Har bir shaxs uchun 'vectors' — barcha vektorlar ro'yxati.
+    """
     conn = get_connection()
     try:
         rows = conn.execute("""
@@ -99,12 +108,28 @@ def load_all_encodings():
         """).fetchall()
         result = []
         for row in rows:
+            raw = pickle.loads(row['feature_vector'])
+            # Eski format: bitta vektor (list of float)
+            # Yangi format: list of list
+            if isinstance(raw, list) and len(raw) > 0:
+                if isinstance(raw[0], (int, float)):
+                    # Eski format — bitta vektor
+                    vectors = [raw]
+                else:
+                    # Yangi format — bir nechta vektor
+                    vectors = raw
+            else:
+                vectors = [raw] if raw else []
+
             result.append({
                 'id': row['id'],
                 'full_name': row['full_name'],
                 'role': row['role'],
                 'person_code': row['person_code'],
-                'vector': pickle.loads(row['feature_vector'])
+                'vectors': vectors,
+                # Backward compatibility uchun
+                'vector': vectors[0] if vectors else None,
+                'encoding': vectors[0] if vectors else None,
             })
         return result
     finally:
@@ -133,7 +158,6 @@ def delete_person(person_id):
     """Shaxsni bazadan o'chiradi"""
     conn = get_connection()
     try:
-        # rasmlarni diskdan o'chirish
         rows = conn.execute(
             "SELECT image_path FROM face_images WHERE person_id=?", (person_id,)
         ).fetchall()
