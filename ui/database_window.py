@@ -3,7 +3,7 @@ import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QAbstractItemView
+    QHeaderView, QMessageBox, QAbstractItemView, QSizePolicy
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QColor
@@ -27,10 +27,10 @@ class DatabaseWidget(QWidget):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
-        # Sarlavha
+        # --- Sarlavha ---
         top = QHBoxLayout()
         title = QLabel("Bazadagi shaxslar")
-        title.setFont(QFont("Arial", 12, QFont.Bold))
+        title.setFont(QFont("Arial", 13, QFont.Bold))
         top.addWidget(title)
         top.addStretch()
 
@@ -39,57 +39,90 @@ class DatabaseWidget(QWidget):
         top.addWidget(self.count_label)
 
         btn_refresh = QPushButton("🔄  Yangilash")
-        btn_refresh.setFixedHeight(30)
+        btn_refresh.setFixedHeight(32)
         btn_refresh.setStyleSheet(
-            "border:1px solid #ccc;border-radius:5px;padding:0 12px;font-size:12px;"
+            "border:1px solid #ccc;border-radius:5px;padding:0 14px;font-size:13px;"
         )
         btn_refresh.clicked.connect(self.load_data)
         top.addWidget(btn_refresh)
-
         root.addLayout(top)
 
-        # Jadval
+        # --- Jadval ---
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(
-            ["Ism familiya", "ID", "Toifa", "Rasmlar", "Encoding", "Amal"]
+            ["Ism familiya", "ID kod", "Toifa", "Rasmlar", "Holati", "Amal"]
         )
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+
+        hdr = self.table.horizontalHeader()
+        # Ism — kengayadi
+        hdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        # Qolganlar — mazmumga qarab
+        for col in range(1, 6):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+
+        # Minimal ustun kengliklarini belgilash
+        self.table.setColumnWidth(1, 80)
+        self.table.setColumnWidth(2, 100)
+        self.table.setColumnWidth(3, 80)
+        self.table.setColumnWidth(4, 110)
+        self.table.setColumnWidth(5, 90)
+
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setDefaultSectionSize(36)
+        self.table.verticalHeader().hide()
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
         self.table.setStyleSheet("""
             QTableWidget {
-                border:1px solid #e0e0e0;
-                border-radius:8px;
-                gridline-color:#f0f0f0;
-                font-size:13px;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                gridline-color: #f0f0f0;
+                font-size: 13px;
+                outline: none;
+            }
+            QTableWidget::item {
+                padding: 4px 10px;
+            }
+            QTableWidget::item:selected {
+                background: #E1F5EE;
+                color: #085041;
             }
             QHeaderView::section {
-                background:#f8f8f8;
-                border:none;
-                border-bottom:1px solid #e0e0e0;
-                padding:6px 8px;
-                font-weight:bold;
-                color:#555;
+                background: #f8f8f8;
+                border: none;
+                border-bottom: 2px solid #e0e0e0;
+                padding: 8px 10px;
+                font-weight: bold;
+                font-size: 13px;
+                color: #444;
             }
-            QTableWidget::item { padding:4px 8px; }
-            QTableWidget::item:selected { background:#E1F5EE; color:#085041; }
+            QScrollBar:vertical {
+                width: 8px;
+                background: #f5f5f5;
+            }
+            QScrollBar::handle:vertical {
+                background: #ccc;
+                border-radius: 4px;
+            }
         """)
-        root.addWidget(self.table)
+        root.addWidget(self.table, stretch=1)
 
-        # Statistika qator
+        # --- Statistika ---
         stats_row = QHBoxLayout()
+        stats_row.setSpacing(10)
         self.stat_labels = {}
-        for key, text in [("total", "Jami"), ("ready", "Tayyor"), ("pending", "Kutilmoqda")]:
+        for key, text, color in [
+            ("total",   "Jami",       "#555"),
+            ("ready",   "✓ Tayyor",   "#1D9E75"),
+            ("pending", "⚠ Kutilmoqda", "#BA7517"),
+        ]:
             lbl = QLabel(f"{text}: 0")
             lbl.setStyleSheet(
-                "background:#f5f5f5;padding:4px 12px;border-radius:5px;font-size:12px;color:#666;"
+                f"background:#f5f5f5;padding:5px 14px;border-radius:6px;"
+                f"font-size:13px;color:{color};font-weight:bold;"
             )
             self.stat_labels[key] = lbl
             stats_row.addWidget(lbl)
@@ -103,16 +136,21 @@ class DatabaseWidget(QWidget):
 
         ready = 0
         for row_idx, p in enumerate(persons):
-            # Ism
+            # Ism familiya
             name_item = QTableWidgetItem(p['full_name'])
             name_item.setData(Qt.UserRole, p['id'])
+            name_item.setFont(QFont("Arial", 13))
             self.table.setItem(row_idx, 0, name_item)
 
-            # ID
-            self.table.setItem(row_idx, 1, QTableWidgetItem(p['person_code'] or '—'))
+            # ID kod
+            id_item = QTableWidgetItem(p['person_code'] or '—')
+            id_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row_idx, 1, id_item)
 
             # Toifa
-            self.table.setItem(row_idx, 2, QTableWidgetItem(p['role'] or '—'))
+            role_item = QTableWidgetItem(p['role'] or '—')
+            role_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row_idx, 2, role_item)
 
             # Rasmlar soni
             photo_item = QTableWidgetItem(str(p['photo_count']))
@@ -121,29 +159,32 @@ class DatabaseWidget(QWidget):
 
             # Encoding holati
             has_enc = p['has_encoding']
-            enc_item = QTableWidgetItem("✓ Tayyor" if has_enc else "⚠ Yo'q")
+            enc_text = "✓ Tayyor" if has_enc else "⚠ Yo'q"
+            enc_item = QTableWidgetItem(enc_text)
             enc_item.setTextAlignment(Qt.AlignCenter)
+            enc_item.setForeground(
+                QColor("#1D9E75") if has_enc else QColor("#BA7517")
+            )
             if has_enc:
-                enc_item.setForeground(QColor("#1D9E75"))
                 ready += 1
-            else:
-                enc_item.setForeground(QColor("#BA7517"))
             self.table.setItem(row_idx, 4, enc_item)
 
             # O'chirish tugmasi
-            btn = QPushButton("O'chirish")
+            btn = QPushButton("🗑  O'chirish")
             btn.setStyleSheet(
                 "background:#fdecea;color:#c0392b;border:none;"
-                "border-radius:4px;padding:3px 10px;font-size:11px;"
+                "border-radius:5px;padding:4px 10px;font-size:12px;margin:2px;"
             )
-            btn.clicked.connect(lambda _, pid=p['id'], name=p['full_name']:
-                                self._delete_person(pid, name))
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(
+                lambda _, pid=p['id'], name=p['full_name']:
+                    self._delete_person(pid, name)
+            )
             self.table.setCellWidget(row_idx, 5, btn)
 
-        # Statistika
         self.stat_labels['total'].setText(f"Jami: {len(persons)}")
-        self.stat_labels['ready'].setText(f"Tayyor: {ready}")
-        self.stat_labels['pending'].setText(f"Kutilmoqda: {len(persons) - ready}")
+        self.stat_labels['ready'].setText(f"✓ Tayyor: {ready}")
+        self.stat_labels['pending'].setText(f"⚠ Kutilmoqda: {len(persons) - ready}")
 
     def _delete_person(self, person_id, name):
         reply = QMessageBox.question(
