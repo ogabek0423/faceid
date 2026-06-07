@@ -158,7 +158,7 @@ class LoginDialog(QDialog):
         form_layout.addWidget(self.btn_login)
 
         # Izoh
-        hint = QLabel(f"💡 Standart: admin / Admin@1234")
+        hint = QLabel(f"")
         hint.setAlignment(Qt.AlignCenter)
         hint.setStyleSheet("color:#aaa;font-size:11px;")
         form_layout.addWidget(hint)
@@ -171,7 +171,7 @@ class LoginDialog(QDialog):
         f_layout = QVBoxLayout(footer)
         f_layout.setContentsMargins(20, 12, 20, 12)
 
-        env_hint = QLabel("🔒 Parolni o'zgartirish uchun .env faylini tahrirlang")
+        env_hint = QLabel("")
         env_hint.setAlignment(Qt.AlignCenter)
         env_hint.setStyleSheet("color:#999;font-size:11px;")
         f_layout.addWidget(env_hint)
